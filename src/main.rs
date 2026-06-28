@@ -1,16 +1,59 @@
+/*
 use axum::{
     Router,
-    extract::Path,
+    // extract::Path,
     response::Html,
     routing::{get, get_service},
 };
 use std::net::SocketAddr;
+*/
 use std::path::PathBuf;
-use tower_http::services::ServeDir;
+// use tower_http::services::ServeDir;
 
-// CHANGE THIS: Point it to the folder containing all your Rust projects
-const WORKSPACE_DIR: &str = "/home/user/projects/rust";
+const WORKSPACE_DIR: &str = "/home/slava/projects/rust";
 
+fn main() {
+    let mut projects = Vec::new();
+    let workspace = PathBuf::from(WORKSPACE_DIR);
+    println!("WORKSPACE_DIR: {}", WORKSPACE_DIR);
+
+    // Scan the workspace directory
+    if let Ok(mut entries) = std::fs::read_dir(workspace) {
+        while let Some(Ok(entry)) = entries.next() {
+            let path = entry.path();
+            if path.is_dir() {
+                let project_name: String = if let Some(dir_name) = path.file_name() {
+                    dir_name.to_string_lossy().into_owned()
+                } else {
+                    panic!("no file_name for {:#?}", path);
+                };
+                /* PSEUDO:
+                * until now I have projects in my workspace. I need:
+                * 1. visit all directories and check if there is targe/doc dir.
+                * if there is add it to my map.
+                * 2. if there are dirs get name of that dir and search for docs again.
+                * do it in recursion
+
+                */
+
+                // Check if this project has a built documentation folder
+                let doc_path = path.join("target").join("doc");
+                if doc_path.join("index.html").exists() || doc_path.exists() {
+                    projects.push(project_name);
+                }
+            }
+        }
+    }
+
+    if projects.is_empty() {
+        println!("projects array is empty");
+    }
+    for project in projects {
+        println!("{project}");
+    }
+}
+
+/*
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -26,9 +69,10 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
-}
+} */
 
 // Handler to generate the central hub HTML page dynamically
+/*
 async fn render_index() -> Html<String> {
     let mut projects = Vec::new();
     let workspace = PathBuf::from(WORKSPACE_DIR);
@@ -86,10 +130,11 @@ async fn render_index() -> Html<String> {
 
     html.push_str("</ul></body></html>");
     Html(html)
-}
+} */
 
 // Fallback router that intercepts /docs/project_name/... requests
 // and maps them directly to the real target/doc directory on your VM disk.
+/*
 async fn handle_docs(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
     let path_str = uri.path();
 
@@ -99,18 +144,20 @@ async fn handle_docs(uri: axum::http::Uri) -> impl axum::response::IntoResponse 
         let project_name = parts[2];
 
         // Reconstruct the real filesystem path inside your workspace
+        // TODO: what if path is nested deeper?? Need to search here.
         let mut real_path = PathBuf::from(WORKSPACE_DIR);
         real_path.push(project_name);
         real_path.push("target");
         real_path.push("doc");
 
         // Append the rest of the requested file path (e.g., index.html, main.js)
+        // I have to pass manually index here!
         let remaining_path = parts[3..].join("/");
         let file_to_serve = real_path.join(remaining_path);
 
         if file_to_serve.exists() {
             return get_service(ServeDir::new(real_path))
-                .call(
+                .call_all(
                     axum::http::Request::builder()
                         .uri(uri)
                         .body(axum::body::Body::empty())
@@ -123,3 +170,4 @@ async fn handle_docs(uri: axum::http::Uri) -> impl axum::response::IntoResponse 
 
     axum::http::StatusCode::NOT_FOUND.into_response()
 }
+*/
