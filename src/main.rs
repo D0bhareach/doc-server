@@ -27,7 +27,6 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-// Generates your dashboard (unchanged)
 async fn generate_doc_index() -> Html<String> {
     let mut crates = Vec::new();
 
