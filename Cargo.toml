@@ -21,3 +21,7 @@ incremental = false
 codegen-units = 16
 rpath = false
 
+[[bin]]
+name = "files"
+test = false
+bench = false
