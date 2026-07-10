@@ -79,6 +79,7 @@ dependencies = [
  "axum",
  "tokio",
  "tower-http",
+ "xdg",
 ]
 
 [[package]]
@@ -562,6 +563,11 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "xdg"
+version = "2.5.2"
+source = "git+https://github.com/whitequark/rust-xdg?rev=66378cb76e1c7b948597dba7bdb081302169c53d#66378cb76e1c7b948597dba7bdb081302169c53d"
 
 [[package]]
 name = "zmij"
