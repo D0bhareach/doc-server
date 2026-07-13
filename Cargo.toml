@@ -1,13 +1,13 @@
 [package]
-name = "doc_server"
+name = "doc-server"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ignore = "0.4"
 axum = "0.8.9"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.7.0", features = ["fs"] }
-xdg = { git = "https://github.com/whitequark/rust-xdg", rev = "66378cb76e1c7b948597dba7bdb081302169c53d" }
 
 
 [profile.release]
@@ -22,7 +22,3 @@ incremental = false
 codegen-units = 16
 rpath = false
 
-[[bin]]
-name = "files"
-test = false
-bench = false

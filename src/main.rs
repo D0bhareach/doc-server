@@ -1,49 +1,15 @@
-use axum::{
-    Router,
-    response::Html,
-    routing::{get, get_service},
-};
-use std::fs;
+mod files;
+use axum::{Router, response::Html, routing::get};
+use std::env;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tower_http::services::ServeDir;
 
-// TODO:  I need to build this paths dinamically
-const DOC_PATH: &str = "/home/slava/projects/rust/utils/doc_server/target/doc/";
-const TOOLCHAIN_DOC_PATH: &str =
-    "/home/slava/.rustup/toolchains/stable-x86_64-unknown-linux-musl/share/doc/rust/html/";
-
-#[tokio::main]
-async fn main() {
-    let doc_service = ServeDir::new(DOC_PATH).append_index_html_on_directories(true);
-    let toolchan_doc_service =
-        ServeDir::new(TOOLCHAIN_DOC_PATH).append_index_html_on_directories(true);
-
-    let app = Router::new()
-        .nest_service("/doc", get_service(doc_service))
-        .nest_service("/toolchain_doc", get_service(toolchan_doc_service))
-        .route("/", get(generate_doc_index));
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    println!("🚀 Doc Server is  running at http://localhost:8080");
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn generate_doc_index() -> Html<String> {
-    let mut crates = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(DOC_PATH) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if folder_name != "static.files" && !folder_name.starts_with('.') {
-                        crates.push(folder_name.to_string());
-                    }
-                }
-            }
-        }
-        crates.sort();
-    }
-
+async fn index_page(
+    toolchain_path: Option<PathBuf>,
+    toolchain_url: &str,
+    projects: Arc<Vec<files::DocProject>>,
+) -> Html<String> {
     let mut html = String::from(
         r#"
         <!DOCTYPE html>
@@ -68,27 +34,89 @@ async fn generate_doc_index() -> Html<String> {
         <body>
             <h1>🦀 Documentation Index</h1>
             <p>Dynamically discovered compiled targets inside target/doc:</p>
-            <ul>
-                <li><a href='/toolchain_doc/index.html'>📦 Rust Toolchain Docs</a></li>
-            </ul>
-            <details>
-                <summary>doc_server</summary>
-                <ul>
-                    <li><a href='/doc/doc_server/index.html'>📦 doc_server</a>
-    "#,
+            <ul>"#,
     );
 
-    if crates.is_empty() {
-        html.push_str("<li>No crates found. Run <code>cargo doc</code> first!</li>");
-    } else {
-        for krate in crates {
+    if let Some(_) = toolchain_path {
+        html.push_str(&format!(
+            "<li><a href='{}'>📦 Rust Toolchain Docs</a></li>",
+            toolchain_url
+        ));
+    };
+
+    // TODO: project are not sorted.
+    for proto in projects.iter() {
+        // Формируем ссылку на index.html каждого найденного крейта
+        if proto.crates.is_empty() {
             html.push_str(&format!(
-                "<li><a href='/doc/{}/index.html'>📦 {}</a></li>",
-                krate, krate
+                "<li><a href='/doc/{}/{}/index.html'>{}</a></li>",
+                proto.name, proto.name, proto.name
             ));
+        } else {
+            html.push_str(&format!(
+                "<li><details>
+                <summary>{}</summary>
+                <ul>",
+                proto.name
+            ));
+
+            for krate in &proto.crates {
+                html.push_str(&format!(
+                    "<li><a href='/doc/{}/{}/index.html'>📦 {}</a></li>",
+                    proto.name, krate, krate
+                ));
+            }
+            html.push_str("</ul></details>");
         }
     }
 
-    html.push_str("</ul></details></body></html>");
+    html.push_str("</ul></body></html>");
     Html(html)
+}
+
+const TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
+static TOOLCHAIN_ROOT_URL: &str = "/toolchain_doc";
+#[tokio::main]
+async fn main() {
+    let home_dir = env::home_dir().expect("error get $HOME path");
+    let toolchain_doc_path = files::get_toolchain_doc_path();
+    let found_docs = files::find_docs(&home_dir);
+
+    let shared_projects = Arc::new(found_docs);
+    let projects_for_route = Arc::clone(&shared_projects);
+
+    let mut app = Router::new();
+    if let Some(toolchain_path) = &toolchain_doc_path {
+        app = app.nest_service(
+            TOOLCHAIN_ROOT_URL,
+            ServeDir::new(toolchain_path).append_index_html_on_directories(true),
+        );
+    };
+
+    // dynamically create my index page
+    app = app.route(
+        "/",
+        get(move || index_page(toolchain_doc_path, TOOLCHAIN_URL, projects_for_route)),
+    );
+
+    // Шаг 3: Динамически регистрируем каждую найденную папку doc в веб-сервере
+    for project in shared_projects.iter() {
+        let absolute_path = match project.doc_path.canonicalize() {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("[ERROR] can not find path {:?}: {}", project.doc_path, e);
+                continue;
+            }
+        };
+        // create service to server all files in docs
+        let root_route = format!("/doc/{}", &project.name);
+        let route_service = ServeDir::new(&absolute_path).append_index_html_on_directories(true);
+        app = app.nest_service(&root_route, route_service);
+    }
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
+        .await
+        .expect("error binding TCP Listener");
+
+    println!("🚀 Doc Server is  running at http://localhost:8080");
+    axum::serve(listener, app).await.expect("error serving app");
 }
