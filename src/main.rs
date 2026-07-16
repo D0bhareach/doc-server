@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
 
-async fn index_page(
-    toolchain_path: Option<PathBuf>,
+fn index_page_content(
+    toolchain_path: &Option<PathBuf>,
     toolchain_url: &str,
-    projects: Arc<Vec<files::DocProject>>,
-) -> Html<String> {
+    projects: &[files::DocProject],
+) -> String {
     let mut html = String::from(
         r#"
         <!DOCTYPE html>
@@ -73,7 +73,7 @@ async fn index_page(
     }
 
     html.push_str("</ul></body></html>");
-    Html(html)
+    html
 }
 
 const TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
@@ -100,14 +100,22 @@ async fn main() {
             }
         },
     };
+
     // let home_dir = env::home_dir().expect("error get $HOME path");
     let toolchain_doc_path = files::get_toolchain_doc_path();
     let found_docs = files::find_docs(&home_dir);
+
+    let index_file_content = index_page_content(&toolchain_doc_path, TOOLCHAIN_URL, &found_docs);
+
+    let index_file_path = files::prepare_cache_index_file(&index_file_content).inspect_err(|err| {
+        panic!("[Error] creating index.html file in cache dir. {}", err);
+    });
 
     let shared_projects = Arc::new(found_docs);
     let projects_for_route = Arc::clone(&shared_projects);
 
     let mut app = Router::new();
+
     if let Some(toolchain_path) = &toolchain_doc_path {
         app = app.nest_service(
             TOOLCHAIN_ROOT_URL,
@@ -120,6 +128,7 @@ async fn main() {
         "/",
         get(move || index_page(toolchain_doc_path, TOOLCHAIN_URL, projects_for_route)),
     );
+    // drop(shared_projects);
 
     // Шаг 3: Динамически регистрируем каждую найденную папку doc в веб-сервере
     for project in shared_projects.iter() {
