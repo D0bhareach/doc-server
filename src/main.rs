@@ -1,6 +1,8 @@
 mod files;
 use axum::{Router, response::Html, routing::get};
+use clap::Parser;
 use std::env;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
@@ -76,9 +78,29 @@ async fn index_page(
 
 const TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
 static TOOLCHAIN_ROOT_URL: &str = "/toolchain_doc";
+
 #[tokio::main]
 async fn main() {
-    let home_dir = env::home_dir().expect("error get $HOME path");
+    let args = Args::parse();
+    let home_dir = match args.path {
+        Some(dir) => dir,
+        None => match env::home_dir() {
+            Some(dir) => dir,
+            None => {
+                let dir = if let Ok(current) = env::current_dir() {
+                    eprintln!(
+                        "[Warning] Can not find $HOME. Searching current directory: {}",
+                        current.display()
+                    );
+                    current
+                } else {
+                    panic!("[Error] Can not find root directory to scan Rust Docs.");
+                };
+                dir
+            }
+        },
+    };
+    // let home_dir = env::home_dir().expect("error get $HOME path");
     let toolchain_doc_path = files::get_toolchain_doc_path();
     let found_docs = files::find_docs(&home_dir);
 
@@ -113,10 +135,29 @@ async fn main() {
         let route_service = ServeDir::new(&absolute_path).append_index_html_on_directories(true);
         app = app.nest_service(&root_route, route_service);
     }
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
+    let addr = std::net::SocketAddr::new(args.host, args.port);
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("error binding TCP Listener");
 
     println!("🚀 Doc Server is  running at http://localhost:8080");
     axum::serve(listener, app).await.expect("error serving app");
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// Path to root dir where "target/doc" will be automatically discovered.
+    /// By default doc-server try to get $HOME dir, if fail to find $HOME doc-server will
+    /// try to get current dir if nothing succeed doc-server will exit with error.
+    #[arg(short = 'w', long)]
+    pub path: Option<PathBuf>,
+
+    /// Port for local http server.
+    #[arg(short = 'p', long, default_value_t = 8080)]
+    pub port: u16,
+
+    /// IP address for server.
+    #[arg(short = 'H', long, default_value = "0.0.0.0")]
+    pub host: IpAddr,
 }
