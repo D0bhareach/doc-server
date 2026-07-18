@@ -11,6 +11,7 @@ axum = "0.8.9"
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.7.0", features = ["fs"] }
 clap = { version = "4.4", features = ["derive"] }
+thiserror = {version = "2.0"}
 
 
 [profile.release]

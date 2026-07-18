@@ -1,5 +1,5 @@
 mod files;
-use axum::{Router, response::Html, routing::get};
+use axum::{Router, routing::get};
 use clap::Parser;
 use std::env;
 use std::net::IpAddr;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 
 fn index_page_content(
-    toolchain_path: &Option<PathBuf>,
+    toolchain_path: &Path,
     toolchain_url: &str,
     projects: &[files::DocProject],
 ) -> String {
@@ -102,7 +102,10 @@ async fn main() {
     };
 
     // let home_dir = env::home_dir().expect("error get $HOME path");
-    let toolchain_doc_path = files::get_toolchain_doc_path();
+    // Do I really need to debug it in production, perhaps leave debug message to verbose option
+    // (need to add this option to command line options)???
+    let toolchain_doc_path = files::get_toolchain_doc_path()
+        .inspect_err(|e| eprintln!("[INFO] can not find toolchain path. {}", e));
     let found_docs = files::find_docs(&home_dir);
 
     let index_file_content = index_page_content(&toolchain_doc_path, TOOLCHAIN_URL, &found_docs);

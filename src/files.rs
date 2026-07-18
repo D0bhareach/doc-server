@@ -1,79 +1,70 @@
 use ignore::WalkBuilder;
 use std::env;
 use std::fs;
-use std::io::{self, Error as IO_Error, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-pub fn prepare_cache_index_file(html_content: &str) -> io::Result<PathBuf> {
-    let mut base_path = if let Ok(xdg_cache) = std::env::var("XDG_CACHE_HOME") {
-        PathBuf::from(xdg_cache)
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".cache")
-    } else {
-        return Err(IO_Error::new(
-            io::ErrorKind::Other,
-            "[Error] problem accessing user's cache dir",
-        ));
-    };
+mod errors;
+use crate::files::errors::FilesError;
 
-    // 2. Добавляем имя нашего приложения
-    base_path.push("doc_server");
+pub fn prepare_cache_index_file(html_content: &str) -> Result<PathBuf, FilesError> {
+    // /doc-server = 11, /index.html = 11, /home = 5, /.cache = 7 so total = 34
+    // give total = 70 double the size 35 bytes not a huge over take.
+    let total_capacity = 70;
+    let mut path = PathBuf::with_capacity(total_capacity);
 
-    // 3. Создаем директорию (аналог mkdir -p)
-    fs::create_dir_all(&base_path)?;
+    let _igno = std::env::var("XDG_CACHE_HOME")
+        .map(|h| path.push(&h))
+        .or_else(|_varerr| {
+            std::env::var("HOME").map(|home| {
+                path.push(home);
+                path.push(".cache");
+            })
+        })?;
+    path.push("doc_server");
+    fs::create_dir_all(&path)?;
 
-    // 4. Формируем путь к файлу: ~/.cache/doc_server/index.html
-    let file_path = base_path.join("index.html");
+    // reuse path
+    path.push("index.html");
 
-    // 5. Записываем сгенерированный HTML
-    let mut file = fs::File::create(&file_path)?;
+    let mut file = fs::File::create(&path)?;
     file.write_all(html_content.as_bytes())?;
 
-    Ok(file_path)
+    Ok(path)
 }
 
-pub fn cleanup_temp_dir(tmp_file_path: &Path) {
-    let res = tmp_file_path.parent().and_then(|parent| {
-        if parent.exists() {
-            fs::remove_dir_all(parent).ok()
-        } else {
-            None
-        }
-    });
-
-    if res.is_none() {
-        eprintln!("doc-server can not remove cached index.html file directory.");
-    }
+pub fn cleanup_temp_dir(tmp_file_path: &Path) -> Result<(), FilesError> {
+    tmp_file_path
+        .parent()
+        .ok_or(FilesError::NotFound(tmp_file_path.to_path_buf()))
+        .and_then(|parent| {
+            if parent.exists() {
+                fs::remove_dir_all(parent)?;
+                Ok(())
+            } else {
+                Err(FilesError::NotFound(parent.to_path_buf()))
+            }
+        })
 }
 
-fn main() {
-    let html_content = "<!DOCTYPE html><html><body><h1>Rust Doc Server Index</h1></body></html>";
+pub fn get_toolchain_doc_path() -> Result<PathBuf, FilesError> {
+    let home = env::var("RUSTUP_HOME")?;
+    let toolchain = env::var("RUSTUP_TOOLCHAIN")?;
 
-    match prepare_xdg_resources(html_content) {
-        Ok(path) => {
-            println!(
-                "[УСПЕХ] Индексный файл создан по стандарту XDG: {}",
-                path.display()
-            );
-            // Этот path мы передаем в Axum: ServeFile::new(path)
-        }
-        Err(e) => {
-            eprintln!("[ОШИБКА] Не удалось создать файл в директории кэша: {}", e);
-        }
-    }
-}
+    // Estimate length of buffer "toolchains" (10) + "share/doc/rust/html" (19)
+    // delimeters (around 5 bytes) = ~34 байта. Double it for host name.
+    let estimated_extra_capacity = 70;
+    let total_capacity = home.len() + toolchain.len() + estimated_extra_capacity;
 
-pub fn get_toolchain_doc_path() -> Option<PathBuf> {
-    let home = env::var("RUSTUP_HOME").ok()?;
-    let toolchain = env::var("RUSTUP_TOOLCHAIN").ok()?;
+    let mut path = PathBuf::with_capacity(total_capacity);
 
-    let mut path = PathBuf::from(home);
+    path.push(&home);
     path.push("toolchains");
-    path.push(toolchain);
+    path.push(&toolchain);
     path.push("share/doc/rust/html");
 
-    Some(path)
+    Ok(path)
 }
 
 // need to sort lists of this struct by name.
@@ -84,6 +75,7 @@ pub struct DocProject {
     pub crates: Vec<String>,
 }
 
+// TODO: make this functio return result
 pub fn find_docs(root_dir: &Path) -> Vec<DocProject> {
     let (tx, rx) = mpsc::channel();
 
@@ -95,6 +87,7 @@ pub fn find_docs(root_dir: &Path) -> Vec<DocProject> {
     walker.run(|| {
         let tx = tx.clone();
         Box::new(move |result| {
+            // TODO: do I need to make this function fallable
             if let Ok(entry) = result {
                 let path = entry.path();
 
