@@ -1,14 +1,33 @@
 mod files;
-use axum::{Router, routing::get};
+use axum::Router;
 use clap::Parser;
 use std::env;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tower_http::services::ServeDir;
+use tokio::signal;
+use tower_http::services::{ServeDir, ServeFile};
 
-fn index_page_content(
-    toolchain_path: &Path,
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// Path to root dir where "target/doc" will be automatically discovered.
+    /// By default doc-server try to get $HOME dir, if fail to find $HOME doc-server will
+    /// try to get current dir if nothing succeed doc-server will exit with error.
+    #[arg(short = 'w', long)]
+    pub path: Option<PathBuf>,
+
+    /// Port for local http server.
+    #[arg(short = 'p', long, default_value_t = 8080)]
+    pub port: u16,
+
+    /// IP address for server.
+    #[arg(short = 'H', long, default_value = "0.0.0.0")]
+    pub host: IpAddr,
+}
+
+fn create_index_page_content(
+    toolchain_path: Option<&Path>,
     toolchain_url: &str,
     projects: &[files::DocProject],
 ) -> String {
@@ -46,7 +65,6 @@ fn index_page_content(
         ));
     };
 
-    // TODO: project are not sorted.
     for proto in projects.iter() {
         // Формируем ссылку на index.html каждого найденного крейта
         if proto.crates.is_empty() {
@@ -76,6 +94,31 @@ fn index_page_content(
     html
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("can not register listener for signal Ctrl+C");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("can not register listener for signal SIGTERM")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => { println!("\nCtrl+C, graceful shutdown..."); },
+        _ = terminate => { println!("\nSIGTERM, graceful shutdown..."); },
+    }
+}
+
+// urls for tool chain
 const TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
 static TOOLCHAIN_ROOT_URL: &str = "/toolchain_doc";
 
@@ -104,18 +147,25 @@ async fn main() {
     // let home_dir = env::home_dir().expect("error get $HOME path");
     // Do I really need to debug it in production, perhaps leave debug message to verbose option
     // (need to add this option to command line options)???
-    let toolchain_doc_path = files::get_toolchain_doc_path()
-        .inspect_err(|e| eprintln!("[INFO] can not find toolchain path. {}", e));
+    let toolchain_doc_path =
+        files::toolchain::find_rust_docs_path() // ::get_toolchain_doc_path()
+            .inspect_err(|e| eprintln!("[INFO] can not find toolchain path. {}", e))
+            .ok();
+    // let toolchain_doc_path =
+    // " /home/slava/.rustup/toolchains/stable-x86_64-unknown-linux-musl/share/doc/rust/html";
     let found_docs = files::find_docs(&home_dir);
 
-    let index_file_content = index_page_content(&toolchain_doc_path, TOOLCHAIN_URL, &found_docs);
+    let index_file_content =
+        create_index_page_content(toolchain_doc_path.as_deref(), TOOLCHAIN_URL, &found_docs);
 
-    let index_file_path = files::prepare_cache_index_file(&index_file_content).inspect_err(|err| {
-        panic!("[Error] creating index.html file in cache dir. {}", err);
-    });
+    // index.html file must exist if not panic
+    let index_file_path =
+        files::prepare_cache_index_file(&index_file_content).unwrap_or_else(|err| {
+            panic!("[Error] creating index.html file in cache dir. {}", err);
+        });
 
     let shared_projects = Arc::new(found_docs);
-    let projects_for_route = Arc::clone(&shared_projects);
+    // let pojects_for_route = Arc::clone(&shared_projects);
 
     let mut app = Router::new();
 
@@ -127,13 +177,8 @@ async fn main() {
     };
 
     // dynamically create my index page
-    app = app.route(
-        "/",
-        get(move || index_page(toolchain_doc_path, TOOLCHAIN_URL, projects_for_route)),
-    );
-    // drop(shared_projects);
+    app = app.fallback_service(ServeFile::new(&index_file_path));
 
-    // Шаг 3: Динамически регистрируем каждую найденную папку doc в веб-сервере
     for project in shared_projects.iter() {
         let absolute_path = match project.doc_path.canonicalize() {
             Ok(path) => path,
@@ -153,23 +198,19 @@ async fn main() {
         .expect("error binding TCP Listener");
 
     println!("🚀 Doc Server is  running at http://localhost:8080");
-    axum::serve(listener, app).await.expect("error serving app");
-}
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("error serving app");
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-pub struct Args {
-    /// Path to root dir where "target/doc" will be automatically discovered.
-    /// By default doc-server try to get $HOME dir, if fail to find $HOME doc-server will
-    /// try to get current dir if nothing succeed doc-server will exit with error.
-    #[arg(short = 'w', long)]
-    pub path: Option<PathBuf>,
-
-    /// Port for local http server.
-    #[arg(short = 'p', long, default_value_t = 8080)]
-    pub port: u16,
-
-    /// IP address for server.
-    #[arg(short = 'H', long, default_value = "0.0.0.0")]
-    pub host: IpAddr,
+    index_file_path.parent().and_then(|dir| {
+        if dir.exists() {
+            let _ = files::cleanup_temp_dir(dir).inspect_err(|err| {
+                eprintln!("[Error] can not remove cached directory: {}", err);
+            });
+            Some(())
+        } else {
+            panic!("[Error] can not get path to cached directory");
+        }
+    });
 }

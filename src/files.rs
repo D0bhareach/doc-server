@@ -1,12 +1,13 @@
+// use directories::UserDirs;
 use ignore::WalkBuilder;
-use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
-mod errors;
-use crate::files::errors::FilesError;
+pub mod errors;
+pub mod toolchain;
+use self::errors::FilesError;
 
 pub fn prepare_cache_index_file(html_content: &str) -> Result<PathBuf, FilesError> {
     // /doc-server = 11, /index.html = 11, /home = 5, /.cache = 7 so total = 34
@@ -35,26 +36,18 @@ pub fn prepare_cache_index_file(html_content: &str) -> Result<PathBuf, FilesErro
 }
 
 pub fn cleanup_temp_dir(tmp_file_path: &Path) -> Result<(), FilesError> {
-    tmp_file_path
-        .parent()
-        .ok_or(FilesError::NotFound(tmp_file_path.to_path_buf()))
-        .and_then(|parent| {
-            if parent.exists() {
-                fs::remove_dir_all(parent)?;
-                Ok(())
-            } else {
-                Err(FilesError::NotFound(parent.to_path_buf()))
-            }
-        })
+    fs::remove_dir_all(tmp_file_path).map_err(FilesError::IoError)
 }
 
-pub fn get_toolchain_doc_path() -> Result<PathBuf, FilesError> {
+/*
+pub fn get_toolchain_doc_path(home: &Path) -> Result<PathBuf, FilesError> {
+    // old code
     let home = env::var("RUSTUP_HOME")?;
     let toolchain = env::var("RUSTUP_TOOLCHAIN")?;
 
     // Estimate length of buffer "toolchains" (10) + "share/doc/rust/html" (19)
     // delimeters (around 5 bytes) = ~34 байта. Double it for host name.
-    let estimated_extra_capacity = 70;
+    let estimated_extra_capacity = 34;
     let total_capacity = home.len() + toolchain.len() + estimated_extra_capacity;
 
     let mut path = PathBuf::with_capacity(total_capacity);
@@ -66,6 +59,7 @@ pub fn get_toolchain_doc_path() -> Result<PathBuf, FilesError> {
 
     Ok(path)
 }
+*/
 
 // need to sort lists of this struct by name.
 #[derive(Debug, Clone)]
