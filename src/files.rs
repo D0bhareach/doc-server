@@ -1,4 +1,4 @@
-// use directories::UserDirs;
+use directories::ProjectDirs;
 use ignore::WalkBuilder;
 use std::fs;
 use std::io::Write;
@@ -12,18 +12,18 @@ use self::errors::FilesError;
 pub fn prepare_cache_index_file(html_content: &str) -> Result<PathBuf, FilesError> {
     // /doc-server = 11, /index.html = 11, /home = 5, /.cache = 7 so total = 34
     // give total = 70 double the size 35 bytes not a huge over take.
-    let total_capacity = 70;
-    let mut path = PathBuf::with_capacity(total_capacity);
+    const TOTAL_CAPACITY: usize = 70;
+    let mut path = PathBuf::with_capacity(TOTAL_CAPACITY);
 
-    let _igno = std::env::var("XDG_CACHE_HOME")
-        .map(|h| path.push(&h))
-        .or_else(|_varerr| {
-            std::env::var("HOME").map(|home| {
-                path.push(home);
-                path.push(".cache");
-            })
-        })?;
-    path.push("doc_server");
+    let Some(project_dirs) = ProjectDirs::from("", "", "doc_server") else {
+        return Err(errors::FilesError::Other(
+            "unable to create ProjectsDirs".to_string(),
+        ));
+    };
+
+    let cache = project_dirs.cache_dir();
+    path.push(cache);
+
     fs::create_dir_all(&path)?;
 
     // reuse path
@@ -39,29 +39,6 @@ pub fn cleanup_temp_dir(tmp_file_path: &Path) -> Result<(), FilesError> {
     fs::remove_dir_all(tmp_file_path).map_err(FilesError::IoError)
 }
 
-/*
-pub fn get_toolchain_doc_path(home: &Path) -> Result<PathBuf, FilesError> {
-    // old code
-    let home = env::var("RUSTUP_HOME")?;
-    let toolchain = env::var("RUSTUP_TOOLCHAIN")?;
-
-    // Estimate length of buffer "toolchains" (10) + "share/doc/rust/html" (19)
-    // delimeters (around 5 bytes) = ~34 байта. Double it for host name.
-    let estimated_extra_capacity = 34;
-    let total_capacity = home.len() + toolchain.len() + estimated_extra_capacity;
-
-    let mut path = PathBuf::with_capacity(total_capacity);
-
-    path.push(&home);
-    path.push("toolchains");
-    path.push(&toolchain);
-    path.push("share/doc/rust/html");
-
-    Ok(path)
-}
-*/
-
-// need to sort lists of this struct by name.
 #[derive(Debug, Clone)]
 pub struct DocProject {
     pub name: String,
@@ -69,7 +46,6 @@ pub struct DocProject {
     pub crates: Vec<String>,
 }
 
-// TODO: make this functio return result
 pub fn find_docs(root_dir: &Path) -> Vec<DocProject> {
     let (tx, rx) = mpsc::channel();
 
@@ -81,7 +57,6 @@ pub fn find_docs(root_dir: &Path) -> Vec<DocProject> {
     walker.run(|| {
         let tx = tx.clone();
         Box::new(move |result| {
-            // TODO: do I need to make this function fallable
             if let Ok(entry) = result {
                 let path = entry.path();
 

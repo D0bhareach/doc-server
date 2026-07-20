@@ -8,4 +8,7 @@ pub enum FilesError {
 
     #[error("Path Not Found: {0}")]
     NotFound(String),
+
+    #[error("{0}")]
+    Other(String),
 }

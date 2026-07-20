@@ -24,11 +24,21 @@ pub struct Args {
     /// IP address for server.
     #[arg(short = 'H', long, default_value = "0.0.0.0")]
     pub host: IpAddr,
+
+    /// Verbose logging to standard output. Will print DEBUG and INFO messages
+    #[arg(short = 'v', default_value_t = false)]
+    pub verbose: bool,
 }
 
+/// create index.html for out server
+/// toolchain_path - Option value can be not discovered, path to rust docs
+/// toolchain_url - const value for route for rust docs
+/// doc_url - const value for root route for all discoverd docs
+/// projects - vector of DocProject struct for all discovered project
 fn create_index_page_content(
     toolchain_path: Option<&Path>,
     toolchain_url: &str,
+    doc_url: &str,
     projects: &[files::DocProject],
 ) -> String {
     let mut html = String::from(
@@ -69,8 +79,8 @@ fn create_index_page_content(
         // Формируем ссылку на index.html каждого найденного крейта
         if proto.crates.is_empty() {
             html.push_str(&format!(
-                "<li><a href='/doc/{}/{}/index.html'>{}</a></li>",
-                proto.name, proto.name, proto.name
+                "<li><a href='{}/{}/{}/index.html'>{}</a></li>",
+                doc_url, proto.name, proto.name, proto.name
             ));
         } else {
             html.push_str(&format!(
@@ -82,8 +92,8 @@ fn create_index_page_content(
 
             for krate in &proto.crates {
                 html.push_str(&format!(
-                    "<li><a href='/doc/{}/{}/index.html'>📦 {}</a></li>",
-                    proto.name, krate, krate
+                    "<li><a href='{}/{}/{}/index.html'>📦 {}</a></li>",
+                    doc_url, proto.name, krate, krate
                 ));
             }
             html.push_str("</ul></details>");
@@ -94,17 +104,18 @@ fn create_index_page_content(
     html
 }
 
+/// graceful shutdown listening for signals
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
-            .expect("can not register listener for signal Ctrl+C");
+            .expect("[ERROR] in listener for signal Ctrl+C");
     };
 
     #[cfg(unix)]
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("can not register listener for signal SIGTERM")
+            .expect("[ERROR] can not register listener for signal SIGTERM")
             .recv()
             .await;
     };
@@ -113,59 +124,57 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => { println!("\nCtrl+C, graceful shutdown..."); },
-        _ = terminate => { println!("\nSIGTERM, graceful shutdown..."); },
+        _ = ctrl_c => { println!("\ngot Ctrl+C signal, graceful shutdown..."); },
+        _ = terminate => { println!("\ngot SIGTERM signal, graceful shutdown..."); },
     }
 }
 
-// urls for tool chain
-const TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
+/// url for app router for toolchain
+static TOOLCHAIN_URL: &str = "/toolchain_doc/index.html";
+
+/// nested service route for all static files in the folder
 static TOOLCHAIN_ROOT_URL: &str = "/toolchain_doc";
+
+/// root route for all documentation that are found
+static DOC_URL: &str = "/doc";
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let home_dir = match args.path {
-        Some(dir) => dir,
-        None => match env::home_dir() {
-            Some(dir) => dir,
-            None => {
-                let dir = if let Ok(current) = env::current_dir() {
-                    eprintln!(
-                        "[Warning] Can not find $HOME. Searching current directory: {}",
-                        current.display()
-                    );
-                    current
-                } else {
-                    panic!("[Error] Can not find root directory to scan Rust Docs.");
-                };
-                dir
-            }
-        },
-    };
 
-    // let home_dir = env::home_dir().expect("error get $HOME path");
-    // Do I really need to debug it in production, perhaps leave debug message to verbose option
-    // (need to add this option to command line options)???
-    let toolchain_doc_path =
-        files::toolchain::find_rust_docs_path() // ::get_toolchain_doc_path()
-            .inspect_err(|e| eprintln!("[INFO] can not find toolchain path. {}", e))
-            .ok();
+    let home_dir: PathBuf = args
+        .path
+        .or_else(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+        .or_else(|| Some(env::current_dir().ok()?))
+        .unwrap_or_else(|| panic!("[ERROR] can not get path for $HOME directory"));
+
+    let toolchain_doc_path = files::toolchain::find_rust_docs_path()
+        .inspect_err(|e| {
+            if args.verbose {
+                eprintln!("[DEBUG] can not find toolchain path. {}", e);
+            }
+        })
+        .ok();
+
     // let toolchain_doc_path =
     // " /home/slava/.rustup/toolchains/stable-x86_64-unknown-linux-musl/share/doc/rust/html";
+    //
     let found_docs = files::find_docs(&home_dir);
 
-    let index_file_content =
-        create_index_page_content(toolchain_doc_path.as_deref(), TOOLCHAIN_URL, &found_docs);
+    let index_file_content = create_index_page_content(
+        toolchain_doc_path.as_deref(),
+        TOOLCHAIN_URL,
+        DOC_URL,
+        &found_docs,
+    );
 
     // index.html file must exist if not panic
     let index_file_path =
         files::prepare_cache_index_file(&index_file_content).unwrap_or_else(|err| {
-            panic!("[Error] creating index.html file in cache dir. {}", err);
+            panic!("[ERROR] creating index.html file in cache dir. {}", err);
         });
 
     let shared_projects = Arc::new(found_docs);
-    // let pojects_for_route = Arc::clone(&shared_projects);
 
     let mut app = Router::new();
 
@@ -183,12 +192,14 @@ async fn main() {
         let absolute_path = match project.doc_path.canonicalize() {
             Ok(path) => path,
             Err(e) => {
-                eprintln!("[ERROR] can not find path {:?}: {}", project.doc_path, e);
+                if args.verbose {
+                    eprintln!("[DEBUG] can not find path {:?}: {}", project.doc_path, e);
+                }
                 continue;
             }
         };
         // create service to server all files in docs
-        let root_route = format!("/doc/{}", &project.name);
+        let root_route = format!("{}/{}", DOC_URL, &project.name);
         let route_service = ServeDir::new(&absolute_path).append_index_html_on_directories(true);
         app = app.nest_service(&root_route, route_service);
     }

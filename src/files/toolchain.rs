@@ -7,7 +7,8 @@ pub fn find_rust_docs_path() -> Result<PathBuf, FilesError> {
     // prepare PathBuf with capacity to avoid reallocation in the heap.
     // standard rustup doc path without host name is about 90 - 120 char long
     // 150 bytes shall be way enough
-    let mut path = PathBuf::with_capacity(150);
+    const TOTAL_CAPACITY: usize = 150;
+    let mut path = PathBuf::with_capacity(TOTAL_CAPACITY);
 
     // ignore errors and chain attempts to get path
     // try to exexute rustup CLI
