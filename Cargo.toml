@@ -4,16 +4,34 @@ version = "0.2.0"
 edition = "2024"
 description = "Automated local documentation server for Rust workspaces and toolchains with built-in routing"
 authors = ["Viacheslav Modestov <viacheslav.modestov@gmail.com>"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-ignore = "0.4"
-axum = "0.8.9"
-directories = "=6.0.0"
-tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread", "signal"] }
-tower-http = { version = "0.7.0", features = ["fs"] }
-clap = { version = "4.4", features = ["derive"] }
-thiserror = {version = "2.0"}
+# ignore 0.4.31
+ignore = { git = "https://github.com/BurntSushi/ripgrep", rev = "59e318f5ace48db54f37bb67c152535bc17fa153" }
+# axum 0.8.9
+axum = { git = "https://github.com/tokio-rs/axum", rev = "c59208c86fded335cd85e388030ad59347b0e5ae" }
+# tower-http 0.7.0
+tower-http = { git = "https://github.com/tower-rs/tower-http", rev = "b194fcfef350577256750815abdb5b13301af410", features = ["fs"] }
+# clap 4.6.3
+clap = { git = "https://github.com/clap-rs/clap", rev = "12e50b3bc855d506cdc07a3bdaece5416e6fc7ba", features = ["derive"] }
+# thiserror 2.0.19
+thiserror = {git = "https://github.com/dtolnay/thiserror", rev = "e13a7854338e446f184725fc8b9c9e86a0a537d2"}
 
+# directories 6.0.0 from codeberg
+[dependencies.directories]
+git = "https://codeberg.org/dirs/directories-rs"
+rev = "4d76f1a5a0a979de3cac4c1ffb53c8b5a6f481a7"
+
+# tokio 1.52.3
+[dependencies.tokio]
+version = "=1.52.3"
+features = ["macros", "net", "rt-multi-thread", "signal"]
+
+[patch.crates-io.tokio]
+git = "https://github.com/tokio-rs/tokio"
+package = "tokio"
+rev = "d87569164fb61145e79e7ffe0b25783569cc8f93"
 
 [profile.release]
 opt-level = 3
